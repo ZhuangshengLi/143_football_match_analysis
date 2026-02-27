@@ -1,2 +1,5 @@
 database.sqlite
 *.sqlite
+
+# Virtual environment
+venv/
