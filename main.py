@@ -1,8 +1,14 @@
-"""Football Match Analysis: process | train"""
+"""Football Match Analysis: process | train
+
+CLI commands:
+  process  - Build L1/L2/L3 features from European Soccer DB, save to .npz
+  train    - Run A/B/C/D ablation (LR on incremental feature sets), print metrics
+"""
 import argparse
 import sys
 from pathlib import Path
 
+# Default paths (override via CLI args)
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "inputs" / "raw" / "database.sqlite"
 DATA_PATH = ROOT / "outputs" / "clean" / "processed_dataset.npz"
@@ -10,16 +16,16 @@ sys.path.insert(0, str(ROOT))
 
 
 def process(args):
-    """Build L1/L2/L3 features from DB, save to .npz"""
+    """Build L1/L2/L3 features from DB, save to .npz."""
     from inputs.match_features import build_match_dataset
     db = Path(args.db) if args.db else DB_PATH
     out = Path(args.out) if args.out else DATA_PATH
-    min_date = getattr(args, "min_date", None)
+    min_date = getattr(args, "min_date", None)  # e.g. 2010-02-22 for valid L2 (Team_Attributes)
     build_match_dataset(db, out, min_date=min_date)
 
 
 def train(args):
-    """Run A/B/C/D ablation, print metrics"""
+    """Run A/B/C/D ablation, print metrics. Requires processed_dataset.npz from process."""
     from inputs.match_features import load_match_dataset
     from models.ablation import run_ablation
     path = Path(args.data) if args.data else DATA_PATH

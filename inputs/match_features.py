@@ -1,4 +1,10 @@
-"""L1/L2/L3 feature engineering. L1=player ability, L2=team style, L3=rolling/Elo."""
+"""L1/L2/L3 feature engineering for European Soccer DB.
+
+Feature levels:
+  L1 - Player static ability (overall, attack, defense, passing, pace, physical, gk)
+  L2 - Team tactical style (buildUpPlay, chanceCreation, defence)
+  L3 - Dynamic state (last 5 win rate, goal diff, Elo, rest days)
+"""
 from __future__ import annotations
 
 import sqlite3
@@ -8,6 +14,7 @@ from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
 
+# Player_Attributes columns for L1 aggregation
 PLAYER_ATTACK = ["finishing", "shot_power", "dribbling", "long_shots", "positioning", "penalties"]
 PLAYER_DEFENSE = ["marking", "standing_tackle", "sliding_tackle", "interceptions"]
 PLAYER_PASSING = ["short_passing", "long_passing", "vision", "ball_control"]
@@ -16,6 +23,7 @@ PLAYER_PHYSICAL = ["stamina", "strength", "agility"]
 PLAYER_GK = ["gk_diving", "gk_handling", "gk_kicking", "gk_positioning", "gk_reflexes"]
 PLAYER_SHOOTING = ["finishing", "shot_power", "long_shots"]
 
+# Team_Attributes columns for L2
 TEAM_STYLE_COLS = [
     "buildUpPlaySpeed", "buildUpPlayPassing",
     "chanceCreationPassing", "chanceCreationShooting",
@@ -24,12 +32,14 @@ TEAM_STYLE_COLS = [
 
 
 def _safe_mean(arr: np.ndarray) -> float:
+    """Mean of finite values; nan if empty. Used for team-level aggregation."""
     arr = np.asarray(arr, dtype=float)
     valid = arr[np.isfinite(arr)]
     return float(np.mean(valid)) if len(valid) > 0 else np.nan
 
 
 def _get_player_attr_at_date(player_att: pd.DataFrame, player_ids: list, match_date: pd.Timestamp) -> pd.DataFrame:
+    """Lookup player attributes at match_date. Uses most recent record with date <= match_date (no leakage)."""
     cols = ["overall_rating"] + PLAYER_ATTACK + PLAYER_DEFENSE + PLAYER_PASSING + PLAYER_PACE + PLAYER_PHYSICAL + PLAYER_GK + PLAYER_SHOOTING
     cols = [c for c in cols if c in player_att.columns]
     out = []
@@ -41,12 +51,13 @@ def _get_player_attr_at_date(player_att: pd.DataFrame, player_ids: list, match_d
         if len(sub) == 0:
             out.append({c: np.nan for c in cols})
             continue
-        row = sub.sort_values("date").iloc[-1]
+        row = sub.sort_values("date").iloc[-1]  # most recent before match
         out.append({c: row.get(c, np.nan) for c in cols})
     return pd.DataFrame(out)
 
 
 def _team_index(players_df: pd.DataFrame, cols: list) -> float:
+    """Mean of available attribute columns for a team's 11 players."""
     avail = [c for c in cols if c in players_df.columns]
     if not avail:
         return np.nan
@@ -99,6 +110,7 @@ def _build_L1_features(home_players: pd.DataFrame, away_players: pd.DataFrame) -
 
 
 def _get_team_attr_at_date(team_att: pd.DataFrame, team_id: int, match_date: pd.Timestamp) -> pd.Series:
+    """Lookup team tactical style at match_date. Most recent record with date <= match_date."""
     sub = team_att[(team_att["team_api_id"] == team_id) & (team_att["date"] <= match_date)]
     if len(sub) == 0:
         return pd.Series({c: np.nan for c in TEAM_STYLE_COLS if c in team_att.columns})
@@ -125,10 +137,10 @@ def _build_L2_features(home_style: pd.Series, away_style: pd.Series) -> dict:
 
 
 def _compute_rolling_and_elo(matches_sorted: pd.DataFrame) -> dict:
-    """Per-match L3: win rate (last 5), goal diff, home win rate, rest days, Elo."""
-    K = 20
+    """Compute L3 features per match. Uses only past matches (date < row date) to avoid leakage."""
+    K = 20  # Elo K-factor
     elo = defaultdict(lambda: 1500.0)
-    team_history = defaultdict(list)
+    team_history = defaultdict(list)  # (date, goal_diff, win, is_home) per team
 
     features = {}
     for _, row in tqdm(matches_sorted.iterrows(), total=len(matches_sorted), desc="L3 rolling"):
@@ -140,6 +152,7 @@ def _compute_rolling_and_elo(matches_sorted: pd.DataFrame) -> dict:
         home_win = 1 if hg > ag else 0
 
         def last5(team_id):
+            """Win rate, avg goal diff, home win rate over last 5 games (before this match)."""
             hist = [x for x in team_history[team_id] if x[0] < date][-5:]
             if not hist:
                 return np.nan, np.nan, np.nan
@@ -154,6 +167,7 @@ def _compute_rolling_and_elo(matches_sorted: pd.DataFrame) -> dict:
         a_win_rate, a_gd, a_home_win = last5(aid)
 
         def rest_days(team_id):
+            """Days since team's last match (before this match)."""
             hist = [x[0] for x in team_history[team_id] if x[0] < date]
             if not hist:
                 return np.nan
@@ -162,6 +176,7 @@ def _compute_rolling_and_elo(matches_sorted: pd.DataFrame) -> dict:
         h_rest = rest_days(hid)
         a_rest = rest_days(aid)
 
+        # Elo update: expected prob from ratings, actual 1/0.5/0 for win/draw/loss
         eh, ea = elo[hid], elo[aid]
         qh, qa = 10 ** (eh / 400), 10 ** (ea / 400)
         exp_h = qh / (qh + qa)
@@ -213,13 +228,14 @@ def build_match_dataset(database_path: str | Path, output_path: str | Path, min_
     team_att["date"] = pd.to_datetime(team_att["date"])
     matches["date"] = pd.to_datetime(matches["date"])
 
+    # Require starting 11 for both sides; filter by min_date for valid L2
     req = [f"home_player_{i}" for i in range(1, 12)] + [f"away_player_{i}" for i in range(1, 12)]
     matches = matches.dropna(subset=[c for c in req if c in matches.columns])
     if min_date is not None:
         min_date = pd.to_datetime(min_date)
         matches = matches[matches["date"] >= min_date].reset_index(drop=True)
     matches = matches.sort_values("date").reset_index(drop=True)
-    L3_map = _compute_rolling_and_elo(matches)
+    L3_map = _compute_rolling_and_elo(matches)  # precompute all L3 (rolling/Elo) in one pass
 
     rows = []
     for i, row in tqdm(matches.iterrows(), total=len(matches), desc="Building features"):
@@ -256,6 +272,7 @@ def build_match_dataset(database_path: str | Path, output_path: str | Path, min_
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if str(output_path).endswith(".npz"):
+        # Save X, y, feature_names, plus metadata for reproducibility
         meta_cols = ["match_api_id", "date", "home_team_api_id", "away_team_api_id"]
         feature_cols = [c for c in df.columns if c not in meta_cols and c != "home_win"]
         X = df[feature_cols].values.astype(np.float64)
@@ -277,6 +294,7 @@ def build_match_dataset(database_path: str | Path, output_path: str | Path, min_
 
 
 def get_feature_groups(df: pd.DataFrame | None = None) -> dict[str, list[str]]:
+    """Return L1, L2, L3, odds column lists for ablation. If df given, filter to existing cols."""
     L1 = [
         "L1_home_overall_mean", "L1_away_overall_mean",
         "L1_home_attack_index", "L1_away_attack_index",
@@ -315,6 +333,7 @@ def get_feature_groups(df: pd.DataFrame | None = None) -> dict[str, list[str]]:
 
 
 def load_match_dataset(path: str | Path) -> pd.DataFrame:
+    """Load .npz (our format) or .parquet. Returns DataFrame with feature cols + home_win + metadata."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")

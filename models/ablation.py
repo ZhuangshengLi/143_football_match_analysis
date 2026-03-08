@@ -1,4 +1,8 @@
-"""Model A/B/C/D ablation. A=L1, B=L1+L2, C=L1+L2+L3, D=C+odds."""
+"""Model A/B/C/D ablation for home win prediction.
+
+Models: A=L1 only, B=L1+L2, C=L1+L2+L3, D=C+odds (B365).
+Time-split: train (oldest) | val | test (newest). LR with balanced class weight.
+"""
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -19,6 +23,7 @@ def _optimal_threshold(y_true: np.ndarray, proba: np.ndarray) -> float:
 
 
 def _prepare_X(df: pd.DataFrame, cols: list, fill_means: dict[str, float] | None = None) -> np.ndarray:
+    """Select cols, fill NaN with train means (val/test use train_means to avoid leakage)."""
     avail = [c for c in cols if c in df.columns]
     X = df[avail].copy()
     for c in avail:
@@ -40,6 +45,7 @@ def run_ablation(df: pd.DataFrame, feature_groups: dict[str, list[str]] | None =
     n_val = int((n - n_test) * val_size)
     n_train = n - n_test - n_val
 
+    # Time-based split: train=oldest, test=newest (no future leakage)
     train_df = df.iloc[:n_train]
     val_df = df.iloc[n_train : n_train + n_val]
     test_df = df.iloc[n_train + n_val :]
@@ -48,6 +54,7 @@ def run_ablation(df: pd.DataFrame, feature_groups: dict[str, list[str]] | None =
     y_val = val_df["home_win"].values
     y_test = test_df["home_win"].values
 
+    # Incremental feature sets for ablation
     models = {
         "A": feature_groups["L1"],
         "B": feature_groups["L1"] + feature_groups["L2"],
@@ -65,7 +72,7 @@ def run_ablation(df: pd.DataFrame, feature_groups: dict[str, list[str]] | None =
         X_val = _prepare_X(val_df, avail, fill_means=train_means)
         X_test = _prepare_X(test_df, avail, fill_means=train_means)
 
-        scaler = StandardScaler()
+        scaler = StandardScaler()  # fit on train only, transform val/test
         X_train_s = scaler.fit_transform(X_train)
         X_val_s = scaler.transform(X_val)
         X_test_s = scaler.transform(X_test)
@@ -75,7 +82,7 @@ def run_ablation(df: pd.DataFrame, feature_groups: dict[str, list[str]] | None =
 
         proba_val = clf.predict_proba(X_val_s)[:, 1]
         proba_test = clf.predict_proba(X_test_s)[:, 1]
-        threshold = _optimal_threshold(y_val, proba_val)
+        threshold = _optimal_threshold(y_val, proba_val)  # tune on val, apply to test
         pred_test = (proba_test >= threshold).astype(int)
         results.append({
             "model": name,

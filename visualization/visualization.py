@@ -1,4 +1,8 @@
-"""Plots: data overview, match/league stats, feature impact, non-linear (SVD/t-SNE/KPCA)."""
+"""Visualization module: plots for data overview, match/league, feature impact, non-linear (SVD/t-SNE/KPCA).
+
+Load functions: load_*_df() read from DB or .npz.
+Plot functions: plot_*() create matplotlib figures. Used by workflow.ipynb.
+"""
 from __future__ import annotations
 
 import sqlite3
@@ -20,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "inputs" / "raw" / "database.sqlite"
 DATA_PATH = ROOT / "outputs" / "clean" / "processed_dataset.npz"
 
+# Top 5 European leagues for filtered plots
 TOP_LEAGUES = [
     "England Premier League",
     "France Ligue 1",
@@ -30,6 +35,7 @@ TOP_LEAGUES = [
 
 
 def load_match_league_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Match + league + goals for league-level stats (total goals, home/away, etc.)."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT Match.id, League.name AS league_name, season,
@@ -43,6 +49,7 @@ def load_match_league_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_player_attributes(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Finishing, shot_power, overall_rating, acceleration for scatter/regplot."""
     conn = sqlite3.connect(db_path or DB_PATH)
     df = pd.read_sql(
         "SELECT finishing, shot_power, overall_rating, acceleration FROM Player_Attributes",
@@ -53,6 +60,7 @@ def load_player_attributes(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_buildup_winrate_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Team buildUpPlaySpeed vs win rate for regplot (tactical style vs success)."""
     conn = sqlite3.connect(db_path or DB_PATH)
     matches = pd.read_sql(
         "SELECT home_team_api_id, away_team_api_id, home_team_goal, away_team_goal FROM Match",
@@ -86,6 +94,7 @@ def load_buildup_winrate_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def _extract_possession(xml_data) -> tuple[Optional[float], Optional[float]]:
+    """Parse Match.possession XML; return (home_pct, away_pct) or (None, None)."""
     try:
         if not xml_data:
             return None, None
@@ -101,6 +110,7 @@ def _extract_possession(xml_data) -> tuple[Optional[float], Optional[float]]:
 
 
 def load_possession_win_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Possession % vs win_score (1/0.5/0) for possession-vs-win regplot."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT home_team_goal, away_team_goal, possession
@@ -124,6 +134,7 @@ def load_possession_win_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def _count_xml_occurrences(xml_string: str, tag_name: str = "value") -> int:
+    """Count <value> elements in Match XML (foulcommit, card, goal)."""
     try:
         if not xml_string:
             return 0
@@ -152,6 +163,7 @@ def load_aggression_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_aggression_eda_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Fouls, cards, total_goals, match_outcome (3/1/0) for EDA pairplot and SVD."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT home_team_goal, away_team_goal, foulcommit, card
@@ -174,6 +186,7 @@ def load_aggression_eda_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_league_aggression_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Top-5 leagues: fouls, cards, goals, outcome for league correlation heatmaps."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT l.name AS league_name, m.home_team_goal, m.away_team_goal, m.foulcommit, m.card
@@ -200,6 +213,7 @@ def load_league_aggression_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_epl_aggression_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """EPL only: fouls, cards, total_goals, outcome for t-SNE vs Kernel PCA comparison."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT m.home_team_goal, m.away_team_goal, m.foulcommit, m.card
@@ -231,6 +245,7 @@ def _check_result(row) -> str:
 
 
 def load_outcome_counts(db_path: Optional[Path] = None) -> pd.Series:
+    """Count of Home Win / Away Win / Draw for donut chart."""
     conn = sqlite3.connect(db_path or DB_PATH)
     df = pd.read_sql("SELECT home_team_goal, away_team_goal FROM Match", conn)
     conn.close()
@@ -239,6 +254,7 @@ def load_outcome_counts(db_path: Optional[Path] = None) -> pd.Series:
 
 
 def load_league_outcome_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Match results by league for stacked bar (Win/Loss/Draw per league)."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT League.name AS league_name, home_team_goal, away_team_goal
@@ -251,6 +267,7 @@ def load_league_outcome_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_aging_curve_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Player age vs overall_rating, potential for aging curve and rating-vs-potential plots."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT p.birthday, pa.date AS rating_date, pa.overall_rating, pa.potential
@@ -267,6 +284,7 @@ def load_aging_curve_df(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_top_players(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Top 10 players by max overall_rating."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT p.player_name, MAX(pa.overall_rating) AS max_rating
@@ -282,6 +300,7 @@ def load_top_players(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_improved_players(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Top 10 most improved players (max - min overall_rating, min 5 records)."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT p.player_name,
@@ -299,6 +318,7 @@ def load_improved_players(db_path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_top_teams_home_wins(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Top 10 teams by home wins count."""
     conn = sqlite3.connect(db_path or DB_PATH)
     query = """
         SELECT Team.team_long_name, COUNT(Match.id) AS total_wins
@@ -332,6 +352,7 @@ def _get_formation(row) -> str:
 
 
 def load_formation_buildup_df(db_path: Optional[Path] = None) -> pd.DataFrame:
+    """Formation (from player Y positions) vs buildUpPlaySpeed for boxplot."""
     conn = sqlite3.connect(db_path or DB_PATH)
     y_cols = ", ".join([f"home_player_Y{i}" for i in range(2, 12)])
     query = f"SELECT id, home_team_api_id, {y_cols} FROM Match"
@@ -402,6 +423,7 @@ def load_data_overview(db_path: Optional[Path] = None) -> dict:
 
 
 def load_feature_impact_df(data_path: Optional[Path] = None) -> pd.DataFrame:
+    """Load processed_dataset.npz as DataFrame with feature cols + y for feature impact plots."""
     path = data_path or DATA_PATH
     data = np.load(path, allow_pickle=True)
     X = data["X"]
@@ -1032,6 +1054,7 @@ def plot_overall_rating_distribution(rating: pd.DataFrame, bins: int = 30, ax=No
 
 def run_all_visualizations(db_path: Optional[Path] = None, data_path: Optional[Path] = None,
                           skip_db_plots: bool = False, skip_feature_impact: bool = False) -> None:
+    """Run all load+plot pipelines. Skips DB plots if DB missing; skips feature impact if .npz missing."""
     db = db_path or DB_PATH
     data = data_path or DATA_PATH
 
