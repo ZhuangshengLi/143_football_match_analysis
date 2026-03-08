@@ -1,0 +1,201 @@
+=== CELL INDEX 3 ===
+import sys
+from pathlib import Path
+
+# Project root: open notebook at project root so cwd is ROOT
+ROOT = Path.cwd()
+if not (ROOT / "main.py").exists():
+    ROOT = ROOT.parent
+sys.path.insert(0, str(ROOT))
+
+from main import DB_PATH, DATA_PATH
+
+print("ROOT:", ROOT)
+print("DB:", DB_PATH)
+print("DB exists:", DB_PATH.exists())
+print("Data path:", DATA_PATH)
+print("Data exists:", DATA_PATH.exists())
+
+=== CELL INDEX 6 ===
+import importlib
+import inputs.match_features
+importlib.reload(inputs.match_features)
+from inputs.match_features import build_match_dataset, load_match_dataset
+
+if not DB_PATH.exists():
+    raise FileNotFoundError(f"DB not found: {DB_PATH}")
+
+# min_date="2010-02-22" ensures L2 has valid data (Team_Attributes 2010-2015)
+print("Building features (L1/L2/L3)...")
+df = build_match_dataset(DB_PATH, DATA_PATH, min_date="2010-02-22")
+print(f"Done. Shape: {df.shape}")
+
+# Check L2/L3 NaN ratio
+l2_cols = [c for c in df.columns if c.startswith("L2_")]
+l3_cols = [c for c in df.columns if c.startswith("L3_")]
+l2_nan = df[l2_cols].isna().sum().sum()
+l3_nan = df[l3_cols].isna().sum().sum()
+print(f"L2 NaN %: {l2_nan / (len(df)*len(l2_cols))*100:.1f}%")
+print(f"L3 NaN %: {l3_nan / (len(df)*len(l3_cols))*100:.1f}%")
+df.head(100)
+
+=== CELL INDEX 9 ===
+from inputs.match_features import load_match_dataset
+from models.ablation import run_ablation
+
+if not DATA_PATH.exists():
+    raise FileNotFoundError(f"Run Step 2 first: {DATA_PATH}")
+
+df = load_match_dataset(DATA_PATH)
+print(f"Loaded: {df.shape}")
+print("Split by time: 80% train, 20% test\n")
+
+results = run_ablation(df)
+print("--- Model A/B/C/D Ablation ---")
+results
+
+=== CELL INDEX 11 ===
+# Ablation metrics line charts: x=model+n_features, y=metrics
+import matplotlib.pyplot as plt
+import numpy as np
+
+try:
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "SimSun", "sans-serif"]
+    plt.rcParams["axes.unicode_minus"] = False
+except Exception:
+    pass
+
+x_labels = [f"{r['model']}\n({int(r['n_features'])} feat)" for _, r in results.iterrows()]
+x_pos = np.arange(len(results))
+metrics = [
+    ("test_auc", "AUC", "higher better"),
+    ("test_acc", "Accuracy", "higher better"),
+    ("test_logloss", "Log Loss", "lower better"),
+    ("test_brier", "Brier Score", "lower better"),
+]
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+axes = axes.flatten()
+for ax, (col, title, note) in zip(axes, metrics):
+    vals = results[col].values
+    ax.plot(x_pos, vals, "o-", linewidth=2, markersize=10, color="steelblue")
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(x_labels)
+    ax.set_ylabel(title)
+    ax.set_title(f"{title} ({note})")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(-0.3, len(results) - 0.7)
+plt.suptitle("Ablation: Model A/B/C/D Metrics Comparison", fontsize=14, y=1.02)
+plt.tight_layout()
+plt.show()
+
+=== CELL INDEX 14 ===
+from visualization.visualization import (
+    load_data_overview,
+    plot_matches_per_league,
+    plot_matches_per_season,
+    plot_matches_per_year,
+    plot_player_age_distribution,
+    plot_overall_rating_distribution,
+)
+
+if DB_PATH.exists():
+    overview = load_data_overview(DB_PATH)
+    plot_matches_per_league(overview["league_counts"])
+    plot_matches_per_season(overview["season_counts"])
+    plot_matches_per_year(overview["year_counts"])
+    plot_player_age_distribution(overview["player_age"])
+    plot_overall_rating_distribution(overview["rating"])
+else:
+    print("Skipped: DB not found")
+
+=== CELL INDEX 16 ===
+from visualization.visualization import (
+    load_match_league_df,
+    plot_total_goals_by_league,
+    plot_goals_over_seasons_by_league,
+    plot_home_vs_away_goals,
+    load_outcome_counts,
+    plot_match_outcome_donut,
+)
+
+if DB_PATH.exists():
+    df_match = load_match_league_df(DB_PATH)
+    plot_total_goals_by_league(df_match)
+    plot_goals_over_seasons_by_league(df_match)
+    plot_home_vs_away_goals(df_match)
+    outcome = load_outcome_counts(DB_PATH)
+    plot_match_outcome_donut(outcome)
+else:
+    print("Skipped: DB not found")
+
+=== CELL INDEX 18 ===
+from visualization.visualization import (
+    load_feature_impact_df,
+    plot_feature_correlation_with_outcome,
+    plot_feature_distribution_by_label,
+    plot_feature_feature_correlation_heatmap,
+)
+
+if DATA_PATH.exists():
+    df_feat = load_feature_impact_df(DATA_PATH)
+    print(f"Feature data: {df_feat.shape}")
+    plot_feature_correlation_with_outcome(df_feat, top_k=25)
+    plot_feature_distribution_by_label(df_feat, top_k=4)
+    plot_feature_feature_correlation_heatmap(df_feat, top_k=15)
+else:
+    print("Skipped: Run Step 2 first to generate processed_dataset.npz")
+
+=== CELL INDEX 20 ===
+from visualization.visualization import (
+    load_aging_curve_df,
+    plot_aging_curve,
+    load_top_players,
+    plot_top_rated_players,
+    load_top_teams_home_wins,
+    plot_top_teams_by_home_wins,
+)
+
+if DB_PATH.exists():
+    df_age = load_aging_curve_df(DB_PATH)
+    plot_aging_curve(df_age)
+    top_players = load_top_players(DB_PATH)
+    plot_top_rated_players(top_players)
+    top_teams = load_top_teams_home_wins(DB_PATH)
+    plot_top_teams_by_home_wins(top_teams)
+else:
+    print("Skipped: DB not found")
+
+=== CELL INDEX 23 ===
+import importlib
+import visualization.visualization
+importlib.reload(visualization.visualization)
+from visualization.visualization import (
+    load_aggression_eda_df,
+    plot_aggression_outcome_pairplot,
+    plot_svd_explained_variance_df,
+    plot_svd_2d_projection_df,
+    load_league_aggression_df,
+    plot_league_correlation_comparison,
+    plot_tsne_by_league,
+    load_epl_aggression_df,
+    plot_tsne_vs_kpca_epl,
+)
+
+if DB_PATH.exists():
+    df_eda = load_aggression_eda_df(DB_PATH)
+    if len(df_eda) > 0:
+        plot_aggression_outcome_pairplot(df_eda)
+        plot_svd_explained_variance_df(df_eda)
+        plot_svd_2d_projection_df(df_eda)
+
+    df_leagues = load_league_aggression_df(DB_PATH)
+    if len(df_leagues) > 0:
+        plot_league_correlation_comparison(df_leagues)
+        plot_tsne_by_league(df_leagues)
+
+    df_epl = load_epl_aggression_df(DB_PATH)
+    if len(df_epl) > 0:
+        plot_tsne_vs_kpca_epl(df_epl)
+else:
+    print("Skipped: DB not found")
+

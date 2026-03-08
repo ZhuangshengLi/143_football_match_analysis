@@ -1,11 +1,4 @@
-"""
-Ablation experiments: Model A/B/C/D
-
-Model A: L1 static ability only
-Model B: L1 + L2 tactical style
-Model C: L1 + L2 + L3 dynamic state
-Model D: C + odds
-"""
+"""Model A/B/C/D ablation. A=L1, B=L1+L2, C=L1+L2+L3, D=C+odds."""
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -14,7 +7,7 @@ from sklearn.metrics import roc_auc_score, log_loss, brier_score_loss
 
 
 def _optimal_threshold(y_true: np.ndarray, proba: np.ndarray) -> float:
-    """Step size 0.005 for threshold stability."""
+    """Grid search threshold for max balanced accuracy on val set."""
     from sklearn.metrics import balanced_accuracy_score
     best_t, best_v = 0.5, 0.0
     for t in np.arange(0.3, 0.71, 0.005):
@@ -25,15 +18,7 @@ def _optimal_threshold(y_true: np.ndarray, proba: np.ndarray) -> float:
     return best_t
 
 
-def _prepare_X(
-    df: pd.DataFrame,
-    cols: list,
-    fill_means: dict[str, float] | None = None,
-) -> np.ndarray:
-    """
-    Select columns, fill NaN.
-    If fill_means (from train) is provided, use it for val/test to avoid leakage.
-    """
+def _prepare_X(df: pd.DataFrame, cols: list, fill_means: dict[str, float] | None = None) -> np.ndarray:
     avail = [c for c in cols if c in df.columns]
     X = df[avail].copy()
     for c in avail:
@@ -43,19 +28,9 @@ def _prepare_X(
     return X.values
 
 
-def run_ablation(
-    df: pd.DataFrame,
-    feature_groups: dict[str, list[str]] | None = None,
-    test_size: float = 0.2,
-    val_size: float = 0.2,
-    class_weight: str | None = "balanced",
-    random_state: int = 42,
-) -> pd.DataFrame:
-    """
-    Run Model A/B/C/D ablation experiments.
-    Split by time: first 80% train, last 20% test (avoid information leakage).
-    NaN filled with train mean for val/test; class_weight defaults to "balanced", pass None for weighted ablation.
-    """
+def run_ablation(df: pd.DataFrame, feature_groups: dict[str, list[str]] | None = None, test_size: float = 0.2,
+                 val_size: float = 0.2, class_weight: str | None = "balanced", random_state: int = 42) -> pd.DataFrame:
+    """Time-split train/val/test, fit LR per model, return AUC/logloss/brier/acc."""
     from inputs.match_features import get_feature_groups
     if feature_groups is None:
         feature_groups = get_feature_groups(df)
@@ -85,7 +60,6 @@ def run_ablation(
         avail = [c for c in cols if c in df.columns]
         if not avail:
             continue
-        # Fill val/test with train mean to avoid leakage
         train_means = {c: train_df[c].mean() for c in avail}
         X_train = _prepare_X(train_df, avail, fill_means=None)
         X_val = _prepare_X(val_df, avail, fill_means=train_means)
@@ -103,24 +77,13 @@ def run_ablation(
         proba_test = clf.predict_proba(X_test_s)[:, 1]
         threshold = _optimal_threshold(y_val, proba_val)
         pred_test = (proba_test >= threshold).astype(int)
-
-        auc = roc_auc_score(y_test, proba_test)
-        logloss = log_loss(y_test, proba_test)
-        brier = brier_score_loss(y_test, proba_test)
-        acc = (pred_test == y_test).mean()
-
-        # Home/away coefficients: interpretable if model has "home" related features
-        coef = dict(zip(avail, clf.coef_[0]))
-        home_coef = [v for k, v in coef.items() if "home" in k.lower() or "diff" in k.lower()]
-        home_coef_mean = np.mean(home_coef) if home_coef else np.nan
-
         results.append({
             "model": name,
             "n_features": len(avail),
-            "test_auc": auc,
-            "test_logloss": logloss,
-            "test_brier": brier,
-            "test_acc": acc,
+            "test_auc": roc_auc_score(y_test, proba_test),
+            "test_logloss": log_loss(y_test, proba_test),
+            "test_brier": brier_score_loss(y_test, proba_test),
+            "test_acc": (pred_test == y_test).mean(),
             "threshold": threshold,
         })
 
