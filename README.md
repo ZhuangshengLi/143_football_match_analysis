@@ -2,6 +2,8 @@
 
 A football match data analysis project based on the European Soccer Database. Transforms raw match and player data into structured datasets for machine learning and visualization.
 
+Our corresponding final presentation can be found here: [Final Presentation Slides](ECE143ProjectSlides.pdf) and our final presentation video can be found here: [Final Presentation Video](ECE143FinalVideo.mp4).
+
 ---
 
 ## Project Structure
